@@ -15,12 +15,13 @@ const int GREEN = TColor::GetColor("#c4ffd4");
 const int RED = TColor::GetColor("#ffc4ed");
 
 class Calibration {
-	static const int N_CELLS = 208;
+	static const int N_CELLS = 304;
 	const char *DEFAULT_FILE_NAME = "calibration.root";
 
 	TFile 			*ioF;
 	WidthFitter  	*cells[N_CELLS];
 	WidthFitter  	*cells_charge[N_CELLS];
+	WidthFitter  	*cells_cosmic[N_CELLS];
 	float  			adc_slopes[N_CELLS];
 	float  			adc_offsets[N_CELLS];
 
@@ -29,21 +30,31 @@ class Calibration {
 	int 			evts;
 	TH1				*relPairAreaH;
 	TH1 			*freqHist;
+
+	static TSpectrum sp1;
+	static TSpectrum sp2;
 public:
 	Calibration(const char *fname) {
 		ioF=new TFile(fname,"update");
 		for (int id=0; id<N_CELLS; id++) {
 			cells[id]=(WidthFitter*)ioF->FindObjectAny(Form("cell%d_day63_hour0",id));
 			cells_charge[id]=(WidthFitter*)ioF->FindObjectAny(Form("cellCharge%d_day63_hour0",id));
+			cells_cosmic[id]=(WidthFitter*)ioF->FindObjectAny(Form("cellCosmic%d_day63_hour0",id));
 		}
 		relPairAreaH = new TH1F("relPairArea","",100, 0, 1);
 		freqHist = new TH1F("frequency", "", N_CELLS, 0,N_CELLS);
+		for (int id=0; id<N_CELLS; id++) {
+			cells[id]		->initSp(&sp1);
+			cells_charge[id]->initSp(&sp1);
+			cells_cosmic[id]->initSp(&sp2);
+		}
 	}
 	Calibration() {
 		ioF=new TFile(DEFAULT_FILE_NAME,"recreate");
 		for (int id=0; id<N_CELLS; id++) {
-			cells[id]=new WidthFitter(id,63,0);
-			cells_charge[id]=new WidthFitter(id,63,0,true);
+			cells[id]=new WidthFitter(id,63,0,&sp1);
+			cells_charge[id]=new WidthFitter(id,63,0,&sp1,1);
+			cells_cosmic[id]=new WidthFitter(id,63,0,&sp2,2);
 		}
 		freqHist = new TH1F("frequency", "", N_CELLS, 0,N_CELLS);
 	}	
@@ -62,7 +73,7 @@ public:
 		rawCat=gLoop->getCategory("HWallRaw");
 		hitCat=gLoop->getCategory("HWallHit");
 	}
-	void loop() {
+	void loopBe() {
 		HWallRaw *raw;
 		for (int e=0; e<evts; e++) {
 			if (e%5000==0) printf("Event %d\n",e);
@@ -82,40 +93,49 @@ public:
 			cells[id]->setCounts(cells[id]->getInit()->GetEntries());
 			cells[id]->Write("",TObject::kOverwrite);
 			cells_charge[id]->Write("",TObject::kOverwrite);
+			cells_cosmic[id]->Write("",TObject::kOverwrite);
 		}
+	}
+	void fitBe() {
+		fillFrequencyHist();
+		doFit(cells);
+		for (int id=0; id<N_CELLS; id++) relPairAreaH->Fill(cells[id]->findBetterCombination());
+		
+	}
+	void fitCo() {
+		doFit(cells_cosmic);
+		for (int id=0; id<N_CELLS; id++) relPairAreaH->Fill(cells[id]->findBetterCombination());
 	}
 
-	void doFit() {
+	void doFit(WidthFitter *fitters[]) {
 		for (int id=0; id<N_CELLS; id++) {
 			printf("\n\n\n\n===========FITTING OF CELL %d ===============\n",id);			
-			// for (int id=0; id<N_CELLS; id++) printf("counts in cell%d : %lld \n",id, cells[id]->getCounts());
-			fillFrequencyHist();
-			cells[id]->flatInit();
-			cells[id]->subtractBg();
-			cells[id]->doSpectr();
-			cells[id]->prepareFitFuncs();
-			cells[id]->doFit();
-			cells[id]->constructTotFit();
-			relPairAreaH->Fill(cells[id]->findBetterCombination());
+			fitters[id]->flatInit();
+			fitters[id]->subtractBg();
+			fitters[id]->doSpectr();
+			fitters[id]->prepareFitFuncs();
+			fitters[id]->doFit();
+			fitters[id]->constructTotFit();
+			
 		}
 	}
-	TList *getInitList() {
+	TList *getInitList(WidthFitter *fitters[]) {
 		TList *res=new TList;
 		for (int id=0; id<N_CELLS; id++) {
-			TH1* h =cells[id]->getInit();
-			h->GetListOfFunctions()->Add(cells[id]->getPM());		
+			TH1* h =fitters[id]->getInit();
+			h->GetListOfFunctions()->Add(fitters[id]->getPM());		
 			h->SetLineColor(kBlue);
 			h->SetTitle(Form("CELL %d",id));
 			res->Add( h );
 		}
 		return res;
 	}
-	TList *getApproxList() {
+	TList *getApproxList(WidthFitter *fitters[]) {
 		TList *res=new TList;
 		for (int id=0; id<N_CELLS; id++) {
-			TH1 *h=cells[id]->getApprox();
-			h->GetListOfFunctions()->Add(cells[id]->getZ1Z2peaks()[0]);
-			h->GetListOfFunctions()->Add(cells[id]->getZ1Z2peaks()[1]);
+			TH1 *h=fitters[id]->getApprox();
+			h->GetListOfFunctions()->Add(fitters[id]->getZ1Z2peaks()[0]);
+			h->GetListOfFunctions()->Add(fitters[id]->getZ1Z2peaks()[1]);
 			// h->SetLineColor(kRed);
 			h->SetLineColor(4000);
 			h->SetTitle(Form("CELL %d",id));
@@ -123,32 +143,32 @@ public:
 		}
 		return res;
 	}
-	TList *getBgList() {
+	TList *getBgList(WidthFitter *fitters[]) {
 		TList *res = new TList;
 		for (int id=0; id<N_CELLS; id++) {
-			TH1 *h=cells[id]->getBg();
+			TH1 *h=fitters[id]->getBg();
 			h->SetLineColor(kMagenta);
 			h->SetTitle(Form("CELL %d",id));
 			res->Add(h); 
 		}
 		return res;
 	}
-	TPolyMarker **getPMs() {
+	TPolyMarker **getPMs(WidthFitter *fitters[]) {
 		TPolyMarker **res = new TPolyMarker*[N_CELLS];
 		for (int id=0; id<N_CELLS; id++) {
-			res[id]= cells[id]->getPM();
+			res[id]= fitters[id]->getPM();
 		}
 		return res;		
 	}
 
-	TH1 *getApproxDiffHist() {
+	TH1 *getApproxDiffHist(WidthFitter *fitters[]) {
 		TH1 *res=new TH1F("approxDif","",200,0,50000);
-		for (int id=0; id<N_CELLS; id++) res->Fill(cells[id]->approxDiff());
+		for (int id=0; id<N_CELLS; id++) res->Fill(fitters[id]->approxDiff());
 		return res;
 	}
-	float *getAppropPeaksNum() {
+	float *getAppropPeaksNum(WidthFitter *fitters[]) {
 		float *res = new float[N_CELLS];
-		for (int id=0; id<N_CELLS; id++) res[id]=cells[id]->countAppropPeaks();
+		for (int id=0; id<N_CELLS; id++) res[id]=fitters[id]->countAppropPeaks();
 		return res;
 	}
 
@@ -161,13 +181,20 @@ public:
 		}
 	}
 
-	void fitQA(const char *pdfname) {
-		TList *il = getInitList();
-		TList *al = getApproxList();
-		TList *bl = getBgList();
-		TPolyMarker **pms = getPMs();
-		TH1 *approxDiff = getApproxDiffHist();
-		float *apprNum = getAppropPeaksNum();
+	void fitQA_be(const char *pdfname) {
+		fitQA(pdfname,cells);
+	}
+	void fitQA_co(const char *pdfname) {
+		fitQA(pdfname,cells_cosmic);
+	}
+
+	void fitQA(const char *pdfname, WidthFitter *fitters[]) {
+		TList *il = getInitList(fitters);
+		TList *al = getApproxList(fitters);
+		TList *bl = getBgList(fitters);
+		TPolyMarker **pms = getPMs(fitters);
+		TH1 *approxDiff = getApproxDiffHist(fitters);
+		float *apprNum = getAppropPeaksNum(fitters);
 
 		THStack st1, st2, st3;
 		int pad=0;
@@ -230,23 +257,31 @@ public:
 
 		canva.Print(Form("%s]",pdfname));
 	}
-	void checkCells() {
+
+	void checkCells_be() {
+		checkCells(cells);
+	}
+	void checkCells_co() {
+		checkCells(cells_cosmic);
+	}
+
+	void checkCells(WidthFitter *fitters[]) {
 		for (int id=0; id<N_CELLS; id++) {
 			printf("%s\n",string(122,'-').c_str());
 			printf("|%9s %19s %17s   %17s   %17s   %17s   %17s   |\n",     "Cell","num of apprPeaks","diff","relPairArea","p1_sigma","p2_sigma","sigmaUpperLimit");
 			double temp,sigmaUpper;
-			cells[id]->getZ1Z2peaks()[1]->GetParLimits(2,temp,sigmaUpper);
-			printf("|%9d %19d %19.2f %19.2f %19.2f %19.2f %19.2f |\n",id,cells[id]->countAppropPeaks(),cells[id]->approxDiff(),cells[id]->findBetterCombination(),
-				cells[id]->getZ1Z2peaks()[0]->GetParameter(2),cells[id]->getZ1Z2peaks()[1]->GetParameter(2), sigmaUpper);
+			fitters[id]->getZ1Z2peaks()[1]->GetParLimits(2,temp,sigmaUpper);
+			printf("|%9d %19d %19.2f %19.2f %19.2f %19.2f %19.2f |\n",id,fitters[id]->countAppropPeaks(),fitters[id]->approxDiff(),fitters[id]->findBetterCombination(),
+				fitters[id]->getZ1Z2peaks()[0]->GetParameter(2),fitters[id]->getZ1Z2peaks()[1]->GetParameter(2), sigmaUpper);
 		
 			//PEAKS
-			vector<float> *positions = cells[id]->getPeakPositions();
+			vector<float> *positions = fitters[id]->getPeakPositions();
 			printf("PEAKS: ");
 			for (float &pos : *positions) printf("%10.2f",pos);
 			printf("\n");
 			////////
 			// printf("counts: %d\t freqHist->max: %.2f\n",cells[id]->getCounts(),freqHist->GetMaximum());
-			printf("INTENCITY:\t%.2f\n",1.0*cells[id]->getCounts()/freqHist->GetMaximum());
+			printf("INTENCITY:\t%.2f\n",1.0*fitters[id]->getCounts()/freqHist->GetMaximum());
 			printf("%s\n",string(122,'-').c_str());
 		}
 	}
@@ -262,7 +297,7 @@ public:
 		}
 	}
 
-	void loop2() {
+	void loopBeRecal() {
 		HWallHit *hit;
 		HWallRaw *raw;
 		for (int id=0; id<N_CELLS; id++) cells_charge[id]->getInit()->Reset();
@@ -306,4 +341,26 @@ public:
 			printf("\tCell %d: %p\n",id,cells_charge[id]->getInit());
 		}
 	}
+	void resetCo() {
+		for (int id=0; id<N_CELLS; id++) {
+			cells_cosmic[id]->getInit()->Reset();
+		}
+	}
+
+	void loopCo() {
+		HWallRaw *raw;
+		for (int e=0; e<evts; e++) {
+			if (e%5000==0) printf("Event %d\n",e);
+			gLoop->nextEvent(e);
+			for (int h=0; h<rawCat->getEntries(); h++) {
+				raw=(HWallRaw*)HCategoryManager::getObject(raw,rawCat,h);
+				int id = raw->getCell();
+				if (id>=N_CELLS) continue;
+				cells_cosmic[id]->fill(raw->getWidth(1));
+			}
+		}		
+	}
 };
+
+TSpectrum Calibration::sp1(WidthFitter::N_PEAKS_1, WidthFitter::SP_RES_1);
+TSpectrum Calibration::sp2(WidthFitter::N_PEAKS_2, WidthFitter::SP_RES_2);

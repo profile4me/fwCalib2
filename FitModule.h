@@ -17,14 +17,14 @@ const int WIDTH_MIN = 0;
 const int WIDTH_MAX = 2500;
 const int CHARGE_MIN = 0;
 const int CHARGE_MAX = 350;
-const int N_ITERATIONS_FLATTER = N_BINS/100;
 const int N_ITERATIONS_BG = N_BINS/10;
 
 class WidthFitter : public TNamed {
 
 	int 						id;					
 	int 						day;			
-	int 						hour;		
+	int 						hour;	
+	int 						hType;	
 	const char 					*namePostfix;		
 	int 						counts;
 
@@ -46,13 +46,22 @@ class WidthFitter : public TNamed {
 	TH1 						*tempH;				//!
 
 	TH1 						*freqHist;
+	// TSpectrum 					*sp;				
+	long 						spP; 			//pointer on spectrum saved in int variable				
 public:
-	static const int N_PEAKS;	
+	static const int N_PEAKS_1;	
+	static const int N_PEAKS_2;	
+	static const float SP_RES_1;
+	static const float SP_RES_2;
+	static const float SP_SIGMA_1;	
+	static const float SP_SIGMA_2;	
+	static const float SP_THRESH_1;	
+	static const float SP_THRESH_2;	
+	static const int N_ITERATIONS_FLATTER_1;
+	static const int N_ITERATIONS_FLATTER_2;
+	
 	static const float HW_COEF;	
-	static const float SP_SIGMA;	
-	static const float SP_THRESH;	
 	static const float FREQ_PERCENTAGE;	
-	static TSpectrum sp;		//!
 	void setFrequencyHist(TH1 *h) {
 		freqHist = h;
 	}
@@ -65,6 +74,7 @@ public:
 		id=day=hour=0;
 		namePostfix=0;
 		counts = 0;
+		hType = 0;
 
 		polyMarker=0;
 		initH=bgH=woBgH=stub=approxH=0;
@@ -77,13 +87,35 @@ public:
 		z1_z2_peaks[1]=0;
 	
 		freqHist=0;
+		spP=0;
 	}
-	WidthFitter(int cell, int day, int hour, bool isCharge=false) {
+	// type==0 - width from be dst
+	// type==1 - charge from be dst
+	// type==2 - width from co dst
+	WidthFitter(int cell, int day, int hour, TSpectrum *sp, int hType=0) {
 		this->id=cell;
 		this->day=day;
 		this->hour=hour;
+		this->spP=(long)sp;
+		this->hType = hType;
+
 		counts=0;
-		namePostfix = Form("cell%s%d_day%d_hour%d", isCharge?"Charge":"" ,id,day,hour);
+		const char *temp;
+		switch (hType) {
+			case 0: { 
+				temp = "";
+				break; 
+			}
+			case 1: { 
+				temp = "Charge"; 	
+				break; 
+			}
+			case 2: { 
+				temp = "Cosmic";	
+				break; 
+			}
+		}
+		namePostfix = Form("cell%s%d_day%d_hour%d",temp,id,day,hour);
 		this->SetName(namePostfix);
 
 		initH=new TH1F("mock1","",10,0,10);
@@ -98,13 +130,17 @@ public:
 		hWidthes = new vector<float>;
 	
 		totFit = new TF1("mock6","gaus");
-		initH = new TH1F(namePostfix, "", N_BINS, isCharge?CHARGE_MIN:WIDTH_MIN, isCharge?CHARGE_MAX:WIDTH_MAX);
+		initH = new TH1F(namePostfix, "", N_BINS, (hType==1)?CHARGE_MIN:WIDTH_MIN, (hType==1)?CHARGE_MAX:WIDTH_MAX);
+		printf("initH initialized with name: %s\n",initH->GetName());
 		polyMarker = new TPolyMarker;
 
 		z1_z2_peaks[0]=new TF1("mock7","gaus");
 		z1_z2_peaks[1]=new TF1("mock8","gaus");
 	
 		freqHist = new TH1F("mock9","",10,0,10);
+	}
+	void initSp(TSpectrum *p) {
+		spP = (long)p;
 	}
 	void fill(float w) {
 		initH->Fill(w);
@@ -116,21 +152,21 @@ public:
 		printf("\t-------> FLAT INIT <---------\n");
 		
 		TH1* old = initH;
-		initH=sp.Background(initH,N_ITERATIONS_FLATTER);
+		initH=((TSpectrum*)spP)->Background(initH,(hType==2)?N_ITERATIONS_FLATTER_2:N_ITERATIONS_FLATTER_1);
 		initH->SetName(old->GetName());
 		delete old;
 	}
 	void subtractBg() {
 		printf("\t-------> subtractBg <---------\n");
-		bgH = sp.Background(initH,N_ITERATIONS_BG);
+		bgH = ((TSpectrum*)spP)->Background(initH,N_ITERATIONS_BG);
 		woBgH=(TH1*)initH->Clone(Form("woBg_%s",namePostfix));
 		woBgH->Add(bgH,-1);
 	} 
 	void doSpectr() {
 		printf("\t-------> doSpectr <---------\n");
-		int n = sp.Search(woBgH,SP_SIGMA, "", SP_THRESH);
-		float *pos = sp.GetPositionX();	
-		int ind[N_PEAKS];
+		int n = ((TSpectrum*)spP)->Search(woBgH, (hType==2)?SP_SIGMA_2:SP_SIGMA_1, "", (hType==2)?SP_THRESH_2:SP_THRESH_1);
+		float *pos = ((TSpectrum*)spP)->GetPositionX();	
+		int ind[N_PEAKS_1];
 		TMath::Sort(n,pos,ind,0);
 		rawPeakPositions->clear();
 		for (int i=0; i<n; i++) rawPeakPositions->push_back(pos[ind[i]]);
@@ -192,9 +228,13 @@ public:
 		for (int p=0; p<limit; p++) {
 			nextFitStep(p);
 		}
+		printf("NUMBER OF PEAKS: %d\n",peakPositions->size());
 		if (!peakPositions->size()) return;
 		
-		//if first peak lays down of 400 then drop it as pedestal. If next one has maximum height and we deal with central cell then left him as Z1 (or maybe composition of 'magic' and Z1), else drop it as 'magic' peak
+		if (hType==2) {
+			firstAppr=0;
+			return;
+		}
 		int shift=0;
 		shift += (peakPositions->at(0)<400) ? 1 : 0;
 		if (peakPositions->size()-shift == 0) {
@@ -219,7 +259,7 @@ public:
 		
 		string formula;
 		int n = rawPeakPositions->size();
-		double pars[N_PEAKS*3];
+		double pars[N_PEAKS_1*3];
 		for (int p=0; p<n; p++) {
 			formula+= (p==0) ? Form("gaus(%d)",p*3) : Form("+gaus(%d)",p*3);
 			fitFuncs->at(p)->GetParameters(&pars[p*3]);
@@ -236,6 +276,7 @@ public:
 	}
 
 	int countAppropPeaks() {
+		// printf("\n peakPositions->size()=%d\n",peakPositions->size());
 		return peakPositions->size() - firstAppr;
 	}
 
