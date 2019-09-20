@@ -139,6 +139,9 @@ public:
 	
 		freqHist = new TH1F("mock9","",10,0,10);
 	}
+	int getType() {
+		return hType;
+	}
 	void initSp(TSpectrum *p) {
 		spP = (long)p;
 	}
@@ -223,6 +226,7 @@ public:
 
 		peakPositions->clear();
 		int n = rawPeakPositions->size();
+		printf("-----doFit(): n = %d\n",n);
 		stub = (TH1*)initH->Clone(Form("stub_%s",namePostfix));
 		int limit=(steps==0)?n:steps;
 		for (int p=0; p<limit; p++) {
@@ -232,7 +236,7 @@ public:
 		if (!peakPositions->size()) return;
 		
 		if (hType==2) {
-			firstAppr=0;
+			firstAppr=1;
 			return;
 		}
 		int shift=0;
@@ -294,22 +298,28 @@ public:
 
 	// search in all fitted peaks laying to the right of 'magic' peak for the pair integral of which is max
 	float findBetterCombination() {
-		if (countAppropPeaks()<2) return 0;
+		if ( id<208 && countAppropPeaks()<2 || countAppropPeaks()<1 ) return 0;
 
 		float area1=0;
 		float area2=0;
 		float totalArea = woBgH->Integral()*(WIDTH_MAX-WIDTH_MIN)/N_BINS;
 		float maxPairArea=0;
-		for (int p1=firstAppr; p1<peakPositions->size(); p1++) {
-			float mean = fitFuncs->at(p1)->GetParameter(1);
-			area1 = fitFuncs->at(p1)->Integral(mean-hWidthes->at(p1), mean+hWidthes->at(p1));
-			for (int p2=p1+1; p2<peakPositions->size(); p2++) {
-				mean = fitFuncs->at(p2)->GetParameter(1);
-				area2 = fitFuncs->at(p2)->Integral(mean-hWidthes->at(p2), mean+hWidthes->at(p2));
-				if (area1+area2>maxPairArea) {
-					z1_z2_peaks[0]=fitFuncs->at(p1); 
-					z1_z2_peaks[1]=fitFuncs->at(p2); 
-					maxPairArea=area1+area2;
+		if (firstAppr+1==peakPositions->size()) {
+			z1_z2_peaks[0]= fitFuncs->at(firstAppr);
+			float mean = fitFuncs->at(firstAppr)->GetParameter(1);
+			maxPairArea = fitFuncs->at(firstAppr)->Integral(mean-hWidthes->at(firstAppr), mean+hWidthes->at(firstAppr));
+		} else {
+			for (int p1=firstAppr; p1<peakPositions->size(); p1++) {
+				float mean = fitFuncs->at(p1)->GetParameter(1);
+				area1 = fitFuncs->at(p1)->Integral(mean-hWidthes->at(p1), mean+hWidthes->at(p1));
+				for (int p2=p1+1; p2<peakPositions->size(); p2++) {
+					mean = fitFuncs->at(p2)->GetParameter(1);
+					area2 = fitFuncs->at(p2)->Integral(mean-hWidthes->at(p2), mean+hWidthes->at(p2));
+					if (area1+area2>maxPairArea) {
+						z1_z2_peaks[0]=fitFuncs->at(p1); 
+						z1_z2_peaks[1]=fitFuncs->at(p2); 
+						maxPairArea=area1+area2;
+					}
 				}
 			}
 		}

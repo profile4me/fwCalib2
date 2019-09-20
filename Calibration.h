@@ -33,6 +33,7 @@ class Calibration {
 
 	static TSpectrum sp1;
 	static TSpectrum sp2;
+	TCanvas			*canva;
 public:
 	Calibration(const char *fname) {
 		ioF=new TFile(fname,"update");
@@ -48,6 +49,7 @@ public:
 			cells_charge[id]->initSp(&sp1);
 			cells_cosmic[id]->initSp(&sp2);
 		}
+		canva = new TCanvas("c1","",1200,800);
 	}
 	Calibration() {
 		ioF=new TFile(DEFAULT_FILE_NAME,"recreate");
@@ -57,6 +59,7 @@ public:
 			cells_cosmic[id]=new WidthFitter(id,63,0,&sp2,2);
 		}
 		freqHist = new TH1F("frequency", "", N_CELLS, 0,N_CELLS);
+		canva = new TCanvas("c1","",1200,800);
 	}	
 	~Calibration() {
 		ioF->Close();
@@ -121,7 +124,9 @@ public:
 	}
 	TList *getInitList(WidthFitter *fitters[]) {
 		TList *res=new TList;
-		for (int id=0; id<N_CELLS; id++) {
+		int minId=0;
+		if (fitters[0]->getType()==2) minId=208; 
+		for (int id=minId; id<N_CELLS; id++) {
 			TH1* h =fitters[id]->getInit();
 			h->GetListOfFunctions()->Add(fitters[id]->getPM());		
 			h->SetLineColor(kBlue);
@@ -132,7 +137,9 @@ public:
 	}
 	TList *getApproxList(WidthFitter *fitters[]) {
 		TList *res=new TList;
-		for (int id=0; id<N_CELLS; id++) {
+		int minId=0;
+		if (fitters[0]->getType()==2) minId=208; 
+		for (int id=minId; id<N_CELLS; id++) {
 			TH1 *h=fitters[id]->getApprox();
 			h->GetListOfFunctions()->Add(fitters[id]->getZ1Z2peaks()[0]);
 			h->GetListOfFunctions()->Add(fitters[id]->getZ1Z2peaks()[1]);
@@ -145,7 +152,9 @@ public:
 	}
 	TList *getBgList(WidthFitter *fitters[]) {
 		TList *res = new TList;
-		for (int id=0; id<N_CELLS; id++) {
+		int minId=0;
+		if (fitters[0]->getType()==2) minId=208; 
+		for (int id=minId; id<N_CELLS; id++) {
 			TH1 *h=fitters[id]->getBg();
 			h->SetLineColor(kMagenta);
 			h->SetTitle(Form("CELL %d",id));
@@ -155,7 +164,9 @@ public:
 	}
 	TPolyMarker **getPMs(WidthFitter *fitters[]) {
 		TPolyMarker **res = new TPolyMarker*[N_CELLS];
-		for (int id=0; id<N_CELLS; id++) {
+		int minId=0;
+		if (fitters[0]->getType()==2) minId=208; 
+		for (int id=minId; id<N_CELLS; id++) {
 			res[id]= fitters[id]->getPM();
 		}
 		return res;		
@@ -163,12 +174,16 @@ public:
 
 	TH1 *getApproxDiffHist(WidthFitter *fitters[]) {
 		TH1 *res=new TH1F("approxDif","",200,0,50000);
-		for (int id=0; id<N_CELLS; id++) res->Fill(fitters[id]->approxDiff());
+		int minId=0;
+		if (fitters[0]->getType()==2) minId=208; 
+		for (int id=minId; id<N_CELLS; id++) res->Fill(fitters[id]->approxDiff());
 		return res;
 	}
 	float *getAppropPeaksNum(WidthFitter *fitters[]) {
 		float *res = new float[N_CELLS];
-		for (int id=0; id<N_CELLS; id++) res[id]=fitters[id]->countAppropPeaks();
+		int minId=0;
+		if (fitters[0]->getType()==2) minId=208; 
+		for (int id=minId; id<N_CELLS; id++) res[id]=fitters[id]->countAppropPeaks();
 		return res;
 	}
 
@@ -183,9 +198,13 @@ public:
 
 	void fitQA_be(const char *pdfname) {
 		fitQA(pdfname,cells);
+		canva->Print(Form("%s]",pdfname));
 	}
 	void fitQA_co(const char *pdfname) {
 		fitQA(pdfname,cells_cosmic);
+		canva->Clear();
+		getZ1ratioHist()->Draw();
+		canva->Print(Form("%s)",pdfname));
 	}
 
 	void fitQA(const char *pdfname, WidthFitter *fitters[]) {
@@ -198,9 +217,8 @@ public:
 
 		THStack st1, st2, st3;
 		int pad=0;
-		int hist=0;
-		TCanvas canva("c1","",1200,800);
-		canva.Print(Form("%s[",pdfname));
+		int hist= (fitters[0]->getType()==2) ? 208 : 0;
+		canva->Print(Form("%s[",pdfname));
 
 
 		for (int i=0; i<il->GetEntries(); i++) {
@@ -211,16 +229,16 @@ public:
 				st1.Draw("PADS");
 				st2.Draw("PADS,same");
 				st3.Draw("PADS,same");
-				canva.Update();
+				canva->Update();
 				
 				
 				for (int p=0; p<N_PADS; p++) {
-					if (apprNum[hist+p]>=2) canva.GetPad(p+1)->SetFillColor(GREEN);
-					else  canva.GetPad(p+1)->SetFillColor(RED);
+					if (hist+p<208 && apprNum[hist+p]<2 || apprNum[hist+p]<1) canva->GetPad(p+1)->SetFillColor(RED);
+					else  canva->GetPad(p+1)->SetFillColor(GREEN);
 				}
 				hist+=N_PADS;
 				
-				canva.Print(pdfname);
+				canva->Print(pdfname);
 				pad=0;
 				st1.GetHists()->Clear();
 				st2.GetHists()->Clear();
@@ -232,30 +250,29 @@ public:
 			st1.Draw("PADS");
 			st2.Draw("PADS,same");
 			st3.Draw("PADS,same");
-			canva.Update();
+			canva->Update();
 			for (int p=0; p<st1.GetNhists(); p++) {
-				if (apprNum[hist+p]>=2) canva.GetPad(p+1)->SetFillColor(GREEN);
-				else  canva.GetPad(p+1)->SetFillColor(RED);
+				if (hist+p<208 && apprNum[hist+p]<2 || apprNum[hist+p]<1) canva->GetPad(p+1)->SetFillColor(RED);
+				else  canva->GetPad(p+1)->SetFillColor(GREEN);
 			}
-			canva.Print(pdfname);
+			canva->Print(pdfname);
 		}
 
 		//distribution of integrated difference fit/init
-		canva.Clear();
+		canva->Clear();
 		approxDiff->Draw();
-		canva.Print(pdfname);
+		canva->Print(pdfname);
 
 		//distribution of relative area under Z1/Z2 peaks
-		canva.Clear();
+		canva->Clear();
 		relPairAreaH->Draw();
-		canva.Print(pdfname);
+		canva->Print(pdfname);
 
 		//disribution of each cell freq
-		canva.Clear();
+		canva->Clear();
 		freqHist->Draw();
-		canva.Print(pdfname);
+		canva->Print(pdfname);
 
-		canva.Print(Form("%s]",pdfname));
 	}
 
 	void checkCells_be() {
@@ -289,11 +306,18 @@ public:
 	void doCal() {
 		for (int id=0; id<N_CELLS; id++) {
 			float slope=0, offset=0;
-			if (cells[id]->countAppropPeaks()<2) continue;
-			slope=100 / ( cells[id]->getZ1Z2peaks()[1]->GetParameter(1)-cells[id]->getZ1Z2peaks()[0]->GetParameter(1) );
-			offset = 100 - slope*cells[id]->getZ1Z2peaks()[0]->GetParameter(1);
+			if (id<208) {
+				if (cells[id]->countAppropPeaks()<2) continue;
+				slope=100 / ( cells[id]->getZ1Z2peaks()[1]->GetParameter(1)-cells[id]->getZ1Z2peaks()[0]->GetParameter(1) );
+				offset = 100 - slope*cells[id]->getZ1Z2peaks()[0]->GetParameter(1);
+			} else {
+				if (cells[id]->countAppropPeaks()<1 || cells_cosmic[id]->countAppropPeaks()<1) continue;
+				slope=240 / ( cells_cosmic[id]->getZ1Z2peaks()[0]->GetParameter(1)-cells[id]->getZ1Z2peaks()[0]->GetParameter(1) );
+				offset= 100 - slope*cells[id]->getZ1Z2peaks()[0]->GetParameter(1);
+			}
 			adc_slopes[id]=slope;
 			adc_offsets[id]=offset;
+			printf("---->doCal(): Cell%d. adc_slope: %.2f \t adc_offsets: %.2f \t apprBeam: %d \t apprCosm: %d\n",id,slope,offset, cells[id]->countAppropPeaks(),cells_cosmic[id]->countAppropPeaks());
 		}
 	}
 
@@ -320,19 +344,34 @@ public:
 	TH2 *getQAplot() {
 		TH2 *qaPlot = new TH2F("qaPlot", "", N_BINS, CHARGE_MIN,CHARGE_MAX, N_CELLS, 0, N_CELLS);
 		for (int id=1; id<=N_CELLS; id++) {
-			if (cells[id]->countAppropPeaks()<2) continue;
+			if (id<208 && cells[id]->countAppropPeaks()<2) continue;
+			else if (cells[id]->countAppropPeaks()<1) continue;
 			for (int bin=1; bin<=N_BINS;bin++) {
 				 qaPlot->SetBinContent(bin,id,cells_charge[id-1]->getInit()->GetBinContent(bin));
 			} 
 		}
 		float maxVal = qaPlot->GetMaximum();
 		for (int id=1; id<=N_CELLS; id++) {
-			if (cells[id]->countAppropPeaks()>=2) continue;
+			if (id<208 && cells[id]->countAppropPeaks()>=2) continue;
+			else if (cells[id]->countAppropPeaks()>=1) continue;
 			for (int bin=1; bin<=N_BINS;bin++) {
 				 qaPlot->SetBinContent(bin,id,maxVal);
 			}
 		}
 		return qaPlot;
+	}
+
+	// hist with distribution of z1_cosm/z1_beam values for good fitted outter cells
+	TH1 *getZ1ratioHist() {
+		TH1 *res = new TH1F("z1Ratio", "", 25,0,5);
+		for (int id=208; id<N_CELLS; id++) {
+			if (cells[id]->countAppropPeaks()<1 || cells_cosmic[id]->countAppropPeaks()<1) continue;
+			float z1Cosm = cells_cosmic[id]->getZ1Z2peaks()[1]->GetParameter(1);
+			float z1Beam = cells[id]->getZ1Z2peaks()[0]->GetParameter(1);
+			printf("----->Cell%d: z1Cosm / z1Beam = %.2f\n",id,z1Cosm/z1Beam);
+			res->Fill(z1Cosm/z1Beam);
+		}	
+		return res;
 	}
 
 	void checkCharge() {

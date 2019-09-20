@@ -50,6 +50,9 @@ void recalQA() {
 	qaPlot->Draw("colz");
 	canva.SetLogz();
 	canva.Print("pdfs/qaPlot.pdf)");
+	TFile *outF=new TFile("test.root","recreate");
+	qaPlot->Write();
+	outF->Close();
 }
 void loopCo() {
 	Calibration *cal=new Calibration("calibration.root");
@@ -64,6 +67,7 @@ void fitCo() {
 	cal->fitCo();
 	cal->checkCells_co();
 	cal->fitQA_co("pdfs/fitQA_cosm.pdf");
+	cal->saveCells();
 	delete cal;
 }
 int main(int argc, char const *argv[])
@@ -75,12 +79,14 @@ int main(int argc, char const *argv[])
 
 
     init();
+	
 	loopBe();
 	fitBe();
-	calib_loopBeRecal();
-	recalQA();
+	
 	loopCo();
 	fitCo();
 
+	calib_loopBeRecal();
+	recalQA();
 	return 0;
 }
